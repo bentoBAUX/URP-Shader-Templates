@@ -1,8 +1,5 @@
 Shader "bentoBAUX/URP Unlit"
 {
-    // The _BaseColor variable is visible in the Material's Inspector, as a field
-    // called Base Color. You can use it to select a custom color. This variable
-    // has the default value (1, 1, 1, 1).
     Properties
     {
         _BaseColor("Base Color", Color) = (1, 1, 1, 1)
