@@ -122,7 +122,7 @@ Shader "bentoBAUX/URP Lit"
                 return saturate(NdotL) * light.color * light.distanceAttenuation * light.shadowAttenuation;
             }
 
-            // This function loops through the lights in the scene
+            // Based on https://docs.unity3d.com/6000.0/Documentation/Manual/urp/use-built-in-shader-methods-additional-lights-fplus.html
             float3 LightLoop(float4 color, InputData inputData)
             {
                 float3 lighting = 0;
