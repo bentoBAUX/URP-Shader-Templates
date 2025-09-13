@@ -5,7 +5,7 @@ It currently includes:
 
 - [**Unlit Shader**](Templates/URP-Unlit.shader) – with built-in fog support
 
-- [**Lit Shader**](Templates/URP-Lit.shader) – implementing Lambertian lighting with fog and shadow support
+- [**Lit Shader**](Templates/URP-Lit.shader) – implementing Lambertian lighting with fog and shadow support. This works in Forward+ and Forward Rendering.
 
 These templates are a starting point for creating custom URP shaders without having to set up all the boilerplate from scratch. I plan to add more templates as I create them, so the collection will grow over time.
 
