@@ -17,37 +17,49 @@ Shader "bentoBAUX/URP Lit"
 
         Pass
         {
+            // The LightMode tag matches the ShaderPassName set in UniversalRenderPipeline.cs.
+            // The SRPDefaultUnlit pass and passes without the LightMode tag are also rendered by URP
             Name "ForwardLit"
             Tags
             {
-                "LightMode"="UniversalForward"
+                "LightMode" = "UniversalForward"
             }
 
             HLSLPROGRAM
-            // ===== Pragmas =====
-            #pragma vertex   vert
+            #pragma vertex vert
             #pragma fragment frag
-            #pragma target 3.0
 
-            // Fog (we keep a simple per-object fog factor)
             #pragma multi_compile_fog
 
-            // Lighting variants
-            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
-            #pragma multi_compile_fragment _ _SHADOWS_SOFT
+            // This multi_compile declaration is required for the Forward rendering path
             #pragma multi_compile _ _ADDITIONAL_LIGHTS
-            #pragma multi_compile_fragment _ _ADDITIONAL_LIGHTS_VERTEX
-            #pragma multi_compile_fragment _ _ADDITIONAL_LIGHT_SHADOWS
 
-            // Normal map keyword (optional)
-            #pragma multi_compile _ _NORMALMAP
+            // This multi_compile declaration is required for the Forward+ rendering path
+            #pragma multi_compile _ _FORWARD_PLUS
 
-            // ===== Includes =====
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/CommonMaterial.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/RealtimeLights.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/ShaderVariablesFunctions.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
-            // ===== Material params (SRP Batcher) =====
+
+            struct Attributes
+            {
+                float4 positionOS : POSITION;
+                float3 normalOS : NORMAL;
+                float4 tangentOS : TANGENT;
+                float2 uv : TEXCOORD0;
+            };
+
+            struct Varyings
+            {
+                float4 positionCS : SV_POSITION;
+                float3 positionWS : TEXCOORD0;
+                float3x3 TBN : TEXCOORD1;
+                float2 uv : TEXCOORD4;
+            };
+
             CBUFFER_START(UnityPerMaterial)
                 half4 _BaseColor;
                 float4 _BaseMap_ST;
@@ -59,153 +71,115 @@ Shader "bentoBAUX/URP Lit"
             TEXTURE2D(_NormalMap);
             SAMPLER(sampler_NormalMap);
 
-            // ===== I/O structs =====
-            struct Attributes
-            {
-                float4 positionOS : POSITION;
-                float3 normalOS : NORMAL;
-                float4 tangentOS : TANGENT;
-                float2 uv : TEXCOORD0;
-            };
-
-            struct Varyings
-            {
-                float4 positionHCS : SV_POSITION;
-                float3 positionWS : TEXCOORD0;
-                float3 normalWS : TEXCOORD1;
-                float3x3 TBN : TEXCOORD2; // STORED AS world->tangent
-                float2 uv : TEXCOORD5;
-                float4 shadowCoord : TEXCOORD6; // main light shadows
-                float fogFactor : TEXCOORD7; // per-object fog (optional)
-            };
-
-            // ===== Helpers =====
-
-            // Build world->tangent matrix (so transpose gives tangent->world)
-            float3x3 BuildWorldToTangent(float3 normalWS, float4 tangentOS)
-            {
-                // Tangent/bitangent in world space
-                float3x3 objectToWorld3x3 = (float3x3)GetObjectToWorldMatrix();
-                float3 T = normalize(mul(objectToWorld3x3, tangentOS.xyz));
-                float3 N = normalize(normalWS);
-                float3 B = normalize(cross(N, T) * tangentOS.w);
-
-                // Tangent-to-world (columns are world axes of tangent space)
-                float3x3 tangentToWorld = float3x3(T, B, N);
-
-                // Return world->tangent (inverse for orthonormal basis = transpose)
-                return transpose(tangentToWorld);
-            }
-
-            // Your requested modular function: consumes v2f/Varyings and returns world-space normal
-            half3 ProcessNormals(Varyings IN)
-            {
-                #if defined(_NORMALMAP)
-                    // Tangent-space normal from normal map
-                    half3 nTS = UnpackNormal(SAMPLE_TEXTURE2D(_NormalMap, sampler_NormalMap, IN.uv));
-                    nTS.xy *= _NormalStrength;
-
-                    // IN.TBN is world->tangent, so transpose(TBN) = tangent->world
-                    return normalize(mul(transpose(IN.TBN), nTS));
-                #else
-                return normalize(IN.normalWS);
-                #endif
-            }
-
-            // Simple per-object fog blend using URP camera params
-            void ApplyFog(inout float3 rgb, float3 positionWS)
-            {
-                #if defined(FOG_LINEAR) || defined(FOG_EXP) || defined(FOG_EXP2)
-                    float viewZ       = -TransformWorldToView(positionWS).z;
-                    float nearZ0ToFar = max(viewZ - _ProjectionParams.y, 0);
-                    float fogAmt      = 1.0 - ComputeFogIntensity(ComputeFogFactorZ0ToFar(nearZ0ToFar));
-                    rgb = lerp(rgb, unity_FogColor.rgb, fogAmt);
-                #endif
-            }
-
-            // Evaluate Lambert for a single light
-            float3 Lambert(float3 N, float3 L, float3 lightColor, float atten)
-            {
-                float ndl = saturate(dot(N, L));
-                return lightColor * (ndl * atten);
-            }
-
-            // ===== Vertex =====
             Varyings vert(Attributes IN)
             {
                 Varyings OUT;
 
-                VertexPositionInputs pos = GetVertexPositionInputs(IN.positionOS.xyz);
-                VertexNormalInputs nrm = GetVertexNormalInputs(IN.normalOS, IN.tangentOS);
+                // Positions
+                OUT.positionWS = TransformObjectToWorld(IN.positionOS.xyz);
+                OUT.positionCS = TransformWorldToHClip(OUT.positionWS);
 
-                OUT.positionHCS = pos.positionCS;
-                OUT.positionWS = pos.positionWS;
-                OUT.normalWS = nrm.normalWS;
-                OUT.uv = TRANSFORM_TEX(IN.uv, _BaseMap);
+                // Build TBN
+                float3 N = normalize(TransformObjectToWorldNormal(IN.normalOS));
+                float3 T = normalize(TransformObjectToWorldDir(IN.tangentOS.xyz));
+                T = normalize(T - N * dot(N, T)); // Re-orthogonalize using one step of Gram-Schmidt in case of small import errors.
+                float3 B = normalize(cross(N, T)) * IN.tangentOS.w;
+                OUT.TBN = float3x3(T, B, N);
 
-                // Build world->tangent TBN and pass it along
-                OUT.TBN = BuildWorldToTangent(nrm.normalWS, IN.tangentOS);
-
-                // Shadow coord for main light
-                OUT.shadowCoord = TransformWorldToShadowCoord(pos.positionWS);
-
-                // Precompute fog factor (optional; we just store scalar intensity)
-                #if defined(FOG_LINEAR) || defined(FOG_EXP) || defined(FOG_EXP2)
-                    float viewZ       = -TransformWorldToView(pos.positionWS).z;
-                    float nearZ0ToFar = max(viewZ - _ProjectionParams.y, 0);
-                    OUT.fogFactor     = 1.0 - ComputeFogIntensity(ComputeFogFactorZ0ToFar(nearZ0ToFar));
-                #else
-                OUT.fogFactor = 0.0;
-                #endif
+                // UV Transform
+                OUT.uv = IN.uv * _BaseMap_ST.xy + _BaseMap_ST.zw;
 
                 return OUT;
             }
 
-            // ===== Fragment =====
-            half4 frag(Varyings IN) : SV_Target
+            half3 ProcessNormals(Varyings IN)
             {
-                // Material inputs
-                float4 baseSample = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, IN.uv);
-                float3 albedo = baseSample.rgb * _BaseColor.rgb;
-                float alpha = baseSample.a * _BaseColor.a;
+                // Tangent-space normal from normal map
+                half3 nTS = UnpackNormal(SAMPLE_TEXTURE2D(_NormalMap, sampler_NormalMap, IN.uv));
+                nTS.xy *= _NormalStrength;
 
-                // Normal in world space (via your modular function)
-                float3 N = ProcessNormals(IN);
+                // IN.TBN is world->tangent, so transpose(TBN) = tangent->world
+                return normalize(mul(transpose(IN.TBN), nTS));
+            }
 
-                // --- Indirect diffuse (SH / probes) ---
-                float3 indirect = SampleSH(N) * albedo;
+            // https://discussions.unity.com/t/how-to-compute-fog-in-hlsl-on-urp/943637/4
+            void ApplyFog(inout float4 color, float3 positionWS)
+            {
+                #if defined(FOG_LINEAR) || defined(FOG_EXP) || defined(FOG_EXP2)
+                    float viewZ = -TransformWorldToView(positionWS).z;
+                    float nearZ0ToFarZ = max(viewZ - _ProjectionParams.y, 0);
+                    float density = 1.0f - ComputeFogIntensity(ComputeFogFactorZ0ToFar(nearZ0ToFarZ));
 
-                // --- Main light ---
-                Light mainL = GetMainLight(IN.shadowCoord);
-                float3 Lm = normalize(mainL.direction);
-                float3 directMain = Lambert(N, Lm, mainL.color.rgb, mainL.shadowAttenuation) * albedo;
+                    color = lerp(color, unity_FogColor,  density);
+                #else
+                color = color;
+                #endif
+            }
 
-                // --- Additional lights ---
-                float3 directAdd = 0;
+            float3 Lambert(float3 normalWS, Light light)
+            {
+                float NdotL = dot(normalWS, normalize(light.direction));
+                return saturate(NdotL) * light.color * light.distanceAttenuation * light.shadowAttenuation;
+            }
+
+            // This function loops through the lights in the scene
+            float3 LightLoop(float4 color, InputData inputData)
+            {
+                float3 lighting = 0;
+
+                // Get the main light
+                Light mainLight = GetMainLight();
+                lighting += SampleSH(inputData.normalWS) + Lambert(inputData.normalWS, mainLight);
+
+                // Get additional lights
                 #if defined(_ADDITIONAL_LIGHTS)
+
+                // Additional light loop for non-main directional lights. This block is specific to Forward+.
+                #if USE_FORWARD_PLUS
+                UNITY_LOOP for (uint lightIndex = 0; lightIndex < min(URP_FP_DIRECTIONAL_LIGHTS_COUNT, MAX_VISIBLE_LIGHTS); lightIndex++)
                 {
-                    uint count = GetAdditionalLightsCount();
-                    for (uint i = 0u; i < count; i++)
-                    {
-                        Light l = GetAdditionalLight(i, IN.positionWS);
-                        float3 L = normalize(l.direction);
-                        float atten = l.distanceAttenuation * l.shadowAttenuation;
-                        directAdd += EvalLambert(N, L, l.color.rgb, atten) * albedo;
-                    }
+                    Light additionalLight = GetAdditionalLight(lightIndex, inputData.positionWS, half4(1,1,1,1));
+                    lighting += Lambert(inputData.normalWS, additionalLight);
                 }
                 #endif
 
-                float3 color = indirect + directMain + directAdd;
+                // Additional light loop.
+                uint pixelLightCount = GetAdditionalLightsCount();
+                LIGHT_LOOP_BEGIN(pixelLightCount)
+                    Light additionalLight = GetAdditionalLight(lightIndex, inputData.positionWS, half4(1,1,1,1));
+                    lighting += Lambert(inputData.normalWS, additionalLight);
+                LIGHT_LOOP_END
 
-                // Per-object fog (using precomputed scalar factor stored in varyings)
-                #if defined(FOG_LINEAR) || defined(FOG_EXP) || defined(FOG_EXP2)
-                    color = lerp(color, unity_FogColor.rgb, IN.fogFactor);
                 #endif
 
-                return half4(color, alpha);
+                return color * lighting;
+            }
+
+            half4 frag(Varyings IN) : SV_Target0
+            {
+                // The Forward+ light loop (LIGHT_LOOP_BEGIN) requires the InputData struct to be in its scope.
+                InputData inputData = (InputData)0;
+                inputData.positionWS = IN.positionWS;
+                inputData.normalWS = ProcessNormals(IN);
+                inputData.viewDirectionWS = GetWorldSpaceNormalizeViewDir(IN.positionWS);
+                inputData.normalizedScreenSpaceUV = GetNormalizedScreenSpaceUV(IN.positionCS);
+
+                // Material Input Setup
+                float4 surfaceColor = _BaseColor * SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, IN.uv);
+                float alpha = surfaceColor.a * _BaseColor.a;
+
+                // Calculate Lighting
+                float3 lighting = LightLoop(surfaceColor, inputData);
+
+                float4 finalColor = float4(lighting, alpha);
+
+                ApplyFog(finalColor, IN.positionWS);
+
+                return finalColor;
             }
             ENDHLSL
         }
+
         Pass
         {
             Name "ShadowCaster"
