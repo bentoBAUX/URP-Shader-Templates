@@ -7,6 +7,8 @@ It currently includes:
 
 - [**Lit Shader**](Templates/URP-Lit.shader) – implementing Lambertian lighting with fog and shadow support. This works in Forward+ and Forward Rendering.
 
+- [**Multi Light Lit Shader**](Templates/Multi%20Light/MultiLight.shader) - a lit shader that allows switching between Lambertian, Blinn-Phong and PBR.
+  
 These templates are a starting point for creating custom URP shaders without having to set up all the boilerplate from scratch. I plan to add more templates as I create them, so the collection will grow over time.
 
 Feel free to use or adapt these templates for your own projects.
