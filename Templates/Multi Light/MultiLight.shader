@@ -194,10 +194,6 @@
                     lit += PBR(surfaceData, mainLight);
                 #endif
 
-                #ifdef _SSS_ON
-                    lit += c * mainLight.color * QuickSSS(surfaceData, mainLight); // Add SSS influence
-                #endif
-
                 #if defined(_ADDITIONAL_LIGHTS)
                 #if USE_FORWARD_PLUS
                 UNITY_LOOP for (uint i = 0; i < min(URP_FP_DIRECTIONAL_LIGHTS_COUNT, MAX_VISIBLE_LIGHTS); i++)
